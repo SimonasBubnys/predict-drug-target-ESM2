@@ -254,7 +254,7 @@ def train(
     all_scores_df = kfold_cv(pairs, labels, embeddings, clfs, n_run, n_fold, n_proportion, n_seed)
 
     all_scores_df.to_csv(results_file, sep=",", index=False)
-
+    
     agg_df = all_scores_df.groupby(["method", "run"]).mean().groupby("method").mean()
     agg_df.to_csv(agg_results_file, sep=",", index=False)
     log.info("Aggregated results:")
@@ -458,8 +458,6 @@ def drop_similar(df: str, col_id: str, threshold: float = 0.9):
     log.info(f"DROPPING {col_id}: {len(indices_to_drop)}")
     # return df.drop(indices_to_drop)
     return df
-
-
 
 def exclude_similar(input_dir, subject_sim_threshold: float = 1, object_sim_threshold: float = 1):
     """Exclude similarities given thresholds, and run training on grid"""

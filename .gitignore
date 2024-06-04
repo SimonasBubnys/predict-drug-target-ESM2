@@ -3,6 +3,7 @@ data/smiles_transformer/
 data/download/opentargets/
 data/processed/
 models/
+data/full database/full_database.xml
 
 MolecularTransformerEmbeddings/
 nohup.out
