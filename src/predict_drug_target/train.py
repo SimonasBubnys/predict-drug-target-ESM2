@@ -14,7 +14,7 @@ import numpy as np
 import pandas as pd
 import torch
 from sklearn import ensemble, metrics
-from sklearn.model_selection import StratifiedKFold, GridSearchCV, train_test_split, KFold
+from sklearn.model_selection import StratifiedGroupKFold, StratifiedKFold, GridSearchCV, train_test_split, KFold
 from sklearn.metrics import precision_score, recall_score, accuracy_score, roc_auc_score, f1_score, average_precision_score
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import GridSearchCV
@@ -157,6 +157,11 @@ def cv_distribute(run_index, pairs, classes, cv, embedding_df, clfs):
 
     return all_scores
 
+def get_groups_array():
+    df = df.read_csv('../../full database/groups.csv')
+    df['groups'] = df['groups'].astype(int)
+    groups_array = df['groups'].values
+    return groups_array
 
 def kfold_cv(pairs_all, classes_all, embedding_df, clfs, n_run, n_fold, n_proportion, n_seed):
     scores_df = pd.DataFrame()
@@ -165,9 +170,10 @@ def kfold_cv(pairs_all, classes_all, embedding_df, clfs, n_run, n_fold, n_propor
         random.seed(n_seed)
         np.random.seed(n_seed)
         pairs, classes = balance_data(pairs_all, classes_all, n_proportion)
+        groups = get_groups_array()
 
-        skf = StratifiedKFold(n_splits=n_fold, shuffle=True, random_state=n_seed)
-        cv = skf.split(pairs, classes)
+        skf = StratifiedGroupKFold(n_splits=n_fold, shuffle=True, random_state=n_seed)
+        cv = skf.split(pairs, classes, groups)
 
         pairs_classes = (pairs, classes)
         cv_list = [(train, test, k) for k, (train, test) in enumerate(cv)]
