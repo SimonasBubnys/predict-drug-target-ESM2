@@ -4,7 +4,7 @@ import os
 
 import pandas as pd
 from tqdm import tqdm
-from src import vectordb
+import vectordb
 
 # from predict_drug_target.embeddings import compute_drug_embedding, compute_target_embedding
 from predict_drug_target.embeddings import compute

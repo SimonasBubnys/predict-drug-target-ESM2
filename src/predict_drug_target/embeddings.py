@@ -292,7 +292,7 @@ def compute(df_known_dt: pd.DataFrame | str, vectordb: Any, out_dir: str = "data
 
     # df_targets = compute_target_embedding(vectordb, set(df_known_dt["target"].tolist()), tmp_dir=out_dir)
     df_targets.to_csv(f"{out_dir}/targets_embeddings.csv", index=False)
-    log.info("Targets embeddings saved to {out_dir}")
+    log.info(f"Targets embeddings saved to {out_dir}")
 
     # Remove from df_known_dt entries where we don't have SMILES or AA seq
     known_dt_before = len(df_known_dt)

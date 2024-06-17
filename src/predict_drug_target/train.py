@@ -21,8 +21,10 @@ from sklearn.model_selection import GridSearchCV
 import xgboost as xgb
 from xgboost import XGBClassifier, DMatrix
 
-from src.utils import log, TrainingConfig
-from src.vectordb import init_vectordb
+from utils import log, TrainingConfig
+from vectordb import init_vectordb
+
+import lxml.etree as ET
 
 vectordb = init_vectordb(recreate=False)
 
@@ -157,11 +159,113 @@ def cv_distribute(run_index, pairs, classes, cv, embedding_df, clfs):
 
     return all_scores
 
-def get_groups_array():
-    df = df.read_csv('../../full database/groups.csv')
-    df['groups'] = df['groups'].astype(int)
-    groups_array = df['groups'].values
+def get_groups_array(pairs, print_groups=False):
+
+    print("Pairs shape ", len(pairs))
+
+    df_tsv = pd.read_csv('././data/full database/drug-mappings.tsv', sep='\t')
+    df_mappings = df_tsv[['drugbankId', 'chembl_id']]
+
+    print("Mappings shape ", df_mappings.shape)
+    print("Duplicated sum ", df_mappings['chembl_id'].duplicated().sum())
+
+    df_mappings = df_mappings.drop_duplicates(subset=['chembl_id'])
+
+    df_second = pd.DataFrame(pairs)
+
+    df_second.columns = ['chembl_compound', 'uniprot_id']
+
+    df_second['chembl_id'] = df_second['chembl_compound'].apply(lambda x: x.split(':')[-1])
+
+    print("Second shape ", df_second.shape)
+
+    df_merged = pd.merge(df_second, df_mappings, on='chembl_id', how='left')
+    
+    df_merged.drop('chembl_id', axis=1, inplace=True)
+
+    df_merged['drugbankId'] = df_merged['drugbankId'].fillna('null')
+
+    print("Merged shape ", df_merged.shape) #ok
+    null_count, db_prefix_count = count_drugbank_entries(df_merged)
+    print(f"Number of 'null' entries: {null_count}")
+    print(f"Number of entries starting with 'DB': {db_prefix_count}")
+    print(df_merged.head())
+
+    # df_merged.to_csv('src/predict_drug_target/merged.csv')
+
+    df_drugbank_id_atc_code = parse_drugbank_xml('././data/full database/full_database.xml')
+    
+    print("Drugbank ID ATC Code shape ", df_drugbank_id_atc_code.shape)
+
+    df_drugbank_id_atc_code['ATC Codes'] = df_drugbank_id_atc_code['ATC Codes'].apply(lambda x: x if x == 'No ATC Code' else x.split(',')[0][0])
+    df_drugbank_id_atc_code = df_drugbank_id_atc_code.rename(columns={'ATC Codes': 'First letter ATC Codes'})
+    df_drugbank_id_atc_code = df_drugbank_id_atc_code.rename(columns={'DrugBank ID': 'drugbankId'})
+
+    print("Drugbank ID ATC Code shape ", df_drugbank_id_atc_code.shape)
+
+    x = pd.merge(df_merged, df_drugbank_id_atc_code, on='drugbankId', how='left')
+
+    df_groups = assign_groups(x, 'First letter ATC Codes')
+
+    if print_groups:
+        group_counts = df_groups['group'].value_counts(normalize=True) * 100
+        all_groups = pd.Series(range(15))
+        group_percentages = all_groups.map(group_counts).fillna(0)
+        for group, percentage in group_percentages.items():
+            print(f"Group {group}: {percentage:.2f}%")
+    
+    #df = pd.read_csv('././data/full database/groups.csv')\
+    #df_groups.to_csv('src/predict_drug_target/groups.csv')
+    df_groups['group'] = df_groups['group'].astype(int)
+    groups_array = df_groups['group'].values
     return groups_array
+
+def count_drugbank_entries(df_merged):
+    count_null = 0
+    count_db_prefix = 0
+
+    for entry in df_merged['drugbankId']:
+        if entry == 'null':
+            count_null += 1
+        else:
+            count_db_prefix += 1
+
+    return count_null, count_db_prefix
+
+def assign_groups(df, column_name):
+    atc_to_group = {}
+    group_id = 0
+    
+    for index, row in df.iterrows():
+        codes = row[column_name]
+        
+        if codes not in atc_to_group:
+            atc_to_group[codes] = group_id
+            group_id += 1
+        
+        df.at[index, 'group'] = atc_to_group[codes]
+    
+    return df
+
+def parse_drugbank_xml(xml_file_path):
+    tree = ET.parse(xml_file_path)
+    root = tree.getroot()
+
+    ns = {'db': 'http://www.drugbank.ca'}
+
+    atc_codes = []
+    drugbank_ids = []
+
+    for drug in root.findall('db:drug', ns):
+        drugbank_id = drug.find('db:drugbank-id', ns).text if drug.find('db:drugbank-id', ns) is not None else 'No ID'
+        
+        atc_code_elements = drug.findall('db:atc-codes/db:atc-code', ns)
+        codes = [code.get('code') for code in atc_code_elements] if atc_code_elements else ['No ATC Code']
+
+        drugbank_ids.append(drugbank_id)
+        atc_codes.append(', '.join(codes))
+    
+    return pd.DataFrame({'DrugBank ID': drugbank_ids, 'ATC Codes': atc_codes})
 
 def kfold_cv(pairs_all, classes_all, embedding_df, clfs, n_run, n_fold, n_proportion, n_seed):
     scores_df = pd.DataFrame()
@@ -170,7 +274,12 @@ def kfold_cv(pairs_all, classes_all, embedding_df, clfs, n_run, n_fold, n_propor
         random.seed(n_seed)
         np.random.seed(n_seed)
         pairs, classes = balance_data(pairs_all, classes_all, n_proportion)
-        groups = get_groups_array()
+
+        # pd.DataFrame(pairs).to_csv("pairs.csv")
+        # pd.DataFrame(classes).to_csv("classes.csv")
+
+        groups = get_groups_array(pairs, True)
+        print("Group shape", groups.shape)
 
         skf = StratifiedGroupKFold(n_splits=n_fold, shuffle=True, random_state=n_seed)
         cv = skf.split(pairs, classes, groups)
@@ -498,10 +607,10 @@ if __name__ == "__main__":
     os.makedirs(out_dir, exist_ok=True)
 
     # Longer version:
-    subject_sim_thresholds = [1, 0.95, 0.90, 0.85, 0.80, 0.75, 0.70, 0.65, 0.60, 0.55, 0.50] # 0.45, 0.40, 0.35, 0.30, 0.25, 0.20, 0.15, 0.10
-    object_sim_thresholds = [1, 0.99, 0.98, 0.97, 0.96, 0.95, 0.94, 0.93, 0.92, 0.91, 0.90, 0.89, 0.88, 0.87] # 0.86, 0.85, 0.84, 0.82, 0.80, 0.78, 0.76, 0.74, 0.72, 0.70
-    # subject_sim_thresholds = [1]
-    # object_sim_thresholds = [1]
+    #subject_sim_thresholds = [1, 0.95, 0.90, 0.85, 0.80, 0.75, 0.70, 0.65, 0.60, 0.55, 0.50] # 0.45, 0.40, 0.35, 0.30, 0.25, 0.20, 0.15, 0.10
+    #object_sim_thresholds = [1, 0.99, 0.98, 0.97, 0.96, 0.95, 0.94, 0.93, 0.92, 0.91, 0.90, 0.89, 0.88, 0.87] # 0.86, 0.85, 0.84, 0.82, 0.80, 0.78, 0.76, 0.74, 0.72, 0.70
+    subject_sim_thresholds = [1]
+    object_sim_thresholds = [1]
     params = { #XGB
         'max_depth': None,
         'n_estimators': 200,
@@ -530,8 +639,8 @@ if __name__ == "__main__":
             df_known_dt, df_drugs_embeddings, df_targets_embeddings  = exclude_similar("data/opentargets", subject_sim_threshold, object_sim_threshold)
             print(f"Similar excluded for {subject_sim_threshold}/{object_sim_threshold}")
 
-            scores = train_gpu(df_known_dt, df_drugs_embeddings, df_targets_embeddings, params)
-            # scores = train(df_known_dt, df_drugs_embeddings, df_targets_embeddings, params)
+            # scores = train_gpu(df_known_dt, df_drugs_embeddings, df_targets_embeddings, params)
+            scores = train(df_known_dt, df_drugs_embeddings, df_targets_embeddings, params)
 
             scores["subject_sim_threshold"] = subject_sim_threshold
             scores["object_sim_threshold"] = object_sim_threshold
