@@ -89,7 +89,6 @@ def balance_data(pairs, classes, n_proportion):
 
     return pairs, classes
 
-
 def get_scores(clf, X_new, y_new):
     scoring = ["precision", "recall", "accuracy", "roc_auc", "f1", "average_precision"]
     scorers = metrics._scorer._check_multimetric_scoring(clf, scoring=scoring)
@@ -152,22 +151,25 @@ def cv_run(run_index, pairs, classes, embedding_df, train, test, fold_index, clf
 
 
 def cv_distribute(run_index, pairs, classes, cv, embedding_df, clfs):
+    # cv_run(run_index, pairs, classes, embedding_df, train, test, fold_index, clfs):
+    # fold[0] is train, fold[1] is test, fold_index is the fold number
     all_scores = pd.DataFrame()
     for fold in cv:
         scores = cv_run(run_index, pairs, classes, embedding_df, fold[0], fold[1], fold[2], clfs)
         all_scores = pd.concat([all_scores, scores], ignore_index=True)
-
     return all_scores
 
 def get_groups_array(pairs, print_groups=False):
 
-    print("Pairs shape ", len(pairs))
+    if print_groups:
+        print("Pairs shape ", len(pairs))
 
     df_tsv = pd.read_csv('././data/full database/drug-mappings.tsv', sep='\t')
     df_mappings = df_tsv[['drugbankId', 'chembl_id']]
 
-    print("Mappings shape ", df_mappings.shape)
-    print("Duplicated sum ", df_mappings['chembl_id'].duplicated().sum())
+    if print_groups:
+        print("Mappings shape ", df_mappings.shape)
+        print("Duplicated sum ", df_mappings['chembl_id'].duplicated().sum())
 
     df_mappings = df_mappings.drop_duplicates(subset=['chembl_id'])
 
@@ -177,7 +179,8 @@ def get_groups_array(pairs, print_groups=False):
 
     df_second['chembl_id'] = df_second['chembl_compound'].apply(lambda x: x.split(':')[-1])
 
-    print("Second shape ", df_second.shape)
+    if print_groups:
+        print("Second shape ", df_second.shape)
 
     df_merged = pd.merge(df_second, df_mappings, on='chembl_id', how='left')
     
@@ -185,23 +188,29 @@ def get_groups_array(pairs, print_groups=False):
 
     df_merged['drugbankId'] = df_merged['drugbankId'].fillna('null')
 
-    print("Merged shape ", df_merged.shape) #ok
+    if print_groups:
+        print("Merged shape ", df_merged.shape)
+
     null_count, db_prefix_count = count_drugbank_entries(df_merged)
-    print(f"Number of 'null' entries: {null_count}")
-    print(f"Number of entries starting with 'DB': {db_prefix_count}")
-    print(df_merged.head())
+
+    if print_groups:
+        print(f"Number of 'null' entries: {null_count}")
+        print(f"Number of entries starting with 'DB': {db_prefix_count}")
+        print(df_merged.head())
 
     # df_merged.to_csv('src/predict_drug_target/merged.csv')
 
     df_drugbank_id_atc_code = parse_drugbank_xml('././data/full database/full_database.xml')
     
-    print("Drugbank ID ATC Code shape ", df_drugbank_id_atc_code.shape)
+    if print_groups:
+        print("Drugbank ID ATC Code shape ", df_drugbank_id_atc_code.shape)
 
     df_drugbank_id_atc_code['ATC Codes'] = df_drugbank_id_atc_code['ATC Codes'].apply(lambda x: x if x == 'No ATC Code' else x.split(',')[0][0])
     df_drugbank_id_atc_code = df_drugbank_id_atc_code.rename(columns={'ATC Codes': 'First letter ATC Codes'})
     df_drugbank_id_atc_code = df_drugbank_id_atc_code.rename(columns={'DrugBank ID': 'drugbankId'})
 
-    print("Drugbank ID ATC Code shape ", df_drugbank_id_atc_code.shape)
+    if print_groups:
+        print("Drugbank ID ATC Code shape ", df_drugbank_id_atc_code.shape)
 
     x = pd.merge(df_merged, df_drugbank_id_atc_code, on='drugbankId', how='left')
 
@@ -275,22 +284,54 @@ def kfold_cv(pairs_all, classes_all, embedding_df, clfs, n_run, n_fold, n_propor
         np.random.seed(n_seed)
         pairs, classes = balance_data(pairs_all, classes_all, n_proportion)
 
-        # pd.DataFrame(pairs).to_csv("pairs.csv")
-        # pd.DataFrame(classes).to_csv("classes.csv")
-
-        groups = get_groups_array(pairs, True)
-        print("Group shape", groups.shape)
-
+        groups = get_groups_array(pairs, False)
+        
         skf = StratifiedGroupKFold(n_splits=n_fold, shuffle=True, random_state=n_seed)
         cv = skf.split(pairs, classes, groups)
+
+        print('test_set_groups_and_counts: ', analyze_folds(groups, cv))
 
         pairs_classes = (pairs, classes)
         cv_list = [(train, test, k) for k, (train, test) in enumerate(cv)]
 
         scores = cv_distribute(r, pairs_classes[0], pairs_classes[1], cv_list, embedding_df, clfs)
         scores_df = pd.concat([scores_df, scores], ignore_index=True)
+
+        #print('test_set_groups_and_counts: ', analyze_folds(groups, cv))
+    
     return scores_df
 
+def analyze_folds(groups, cv):
+    all_folds_group_counts = []
+
+    for _, (train_index, test_index) in enumerate(cv):
+        test_groups = groups[test_index]
+
+        group_counts = {}
+        for group in test_groups:
+            if group in group_counts:
+                group_counts[group] += 1
+            else:
+                group_counts[group] = 1
+
+        # append the list of (group, count) tuples for this fold to the main list
+        all_folds_group_counts.append(list(group_counts.items()))
+
+    return all_folds_group_counts
+
+def get_group_partitions_string(groups, fold_number):
+    fold = groups.get(f"Fold {fold_number}", None)
+
+    list = []
+    for (x,y) in fold:
+        entry = ('Group ', x, ' with ', y,' instances')
+        list.append(entry)
+
+    sentence = 'Group partitions: '
+    for x in list:
+        sentence += ''.join(map(str, x)) + ', '
+    
+    return sentence
 
 ###### Main training function
 
@@ -367,6 +408,8 @@ def train(
 
     # Run training
     all_scores_df = kfold_cv(pairs, labels, embeddings, clfs, n_run, n_fold, n_proportion, n_seed)
+
+    print('all scores df columns ', all_scores_df.columns)
 
     all_scores_df.to_csv(results_file, sep=",", index=False)
     
@@ -639,7 +682,7 @@ if __name__ == "__main__":
             df_known_dt, df_drugs_embeddings, df_targets_embeddings  = exclude_similar("data/opentargets", subject_sim_threshold, object_sim_threshold)
             print(f"Similar excluded for {subject_sim_threshold}/{object_sim_threshold}")
 
-            # scores = train_gpu(df_known_dt, df_drugs_embeddings, df_targets_embeddings, params)
+            #scores = train_gpu(df_known_dt, df_drugs_embeddings, df_targets_embeddings, params)
             scores = train(df_known_dt, df_drugs_embeddings, df_targets_embeddings, params)
 
             scores["subject_sim_threshold"] = subject_sim_threshold
