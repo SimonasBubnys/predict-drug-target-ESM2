@@ -9,7 +9,7 @@ import json
 from datetime import date, datetime
 from itertools import product
 import requests
-
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import torch
@@ -20,14 +20,11 @@ from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import GridSearchCV
 import xgboost as xgb
 from xgboost import XGBClassifier, DMatrix
-
 from utils import log, TrainingConfig
 from vectordb import init_vectordb
-
 import lxml.etree as ET
 
 vectordb = init_vectordb(recreate=False)
-
 
 def generate_dt_pairs(dt_df):
     """Get pairs and their labels: All given known drug-target pairs are 1,
@@ -276,9 +273,55 @@ def parse_drugbank_xml(xml_file_path):
     
     return pd.DataFrame({'DrugBank ID': drugbank_ids, 'ATC Codes': atc_codes})
 
+def plot_cv_indices(cv, X, y, group, ax, n_splits, lw=10):
+    """Create a sample plot for indices of a cross-validation object."""
+
+    # Generate the training/testing visualizations for each CV split
+    for ii, (tr, tt) in enumerate(cv.split(X=X, y=y, groups=group)):
+        # Fill in indices with the training/test groups
+        indices = np.array([np.nan] * len(X))
+        indices[tt] = 1
+        indices[tr] = 0
+
+        # Visualize the results
+        ax.scatter(
+            range(len(indices)),
+            [ii + 0.5] * len(indices),
+            c=indices,
+            marker="_",
+            lw=lw,
+            cmap=plt.cm.coolwarm,
+            vmin=-0.2,
+            vmax=1.2,
+        )
+
+    # Plot the data classes and groups at the end
+    ax.scatter(
+        range(len(X)), [ii + 1.5] * len(X), c=y, marker="_", lw=lw, cmap=plt.cm.Paired
+    )
+
+    ax.scatter(
+        range(len(X)), [ii + 2.5] * len(X), c=group, marker="_", lw=lw, cmap=plt.cm.Paired
+    )
+
+    # Formatting
+    yticklabels = list(range(n_splits)) + ["class", "group"]
+    ax.set(
+        yticks=np.arange(n_splits + 2) + 0.5,
+        yticklabels=yticklabels,
+        xlabel="Sample index",
+        ylabel="CV iteration",
+        ylim=[n_splits + 2.2, -0.2],
+        xlim=[0, 100],
+    )
+    ax.set_title("{}".format(type(cv).__name__), fontsize=15)
+    return ax
+
 def kfold_cv(pairs_all, classes_all, embedding_df, clfs, n_run, n_fold, n_proportion, n_seed):
     scores_df = pd.DataFrame()
     for r in range(1, n_run + 1):
+        fig, ax = plt.subplots()
+
         n_seed += r
         random.seed(n_seed)
         np.random.seed(n_seed)
@@ -287,6 +330,9 @@ def kfold_cv(pairs_all, classes_all, embedding_df, clfs, n_run, n_fold, n_propor
         groups = get_groups_array(pairs, False)
         
         skf = StratifiedGroupKFold(n_splits=n_fold, shuffle=True, random_state=n_seed)
+
+        plot_cv_indices(skf, pairs, classes, groups, ax, 10)
+        plt.savefig('figure.png')
         cv = skf.split(pairs, classes, groups)
 
         print('test_set_groups_and_counts: ', analyze_folds(groups, cv))
@@ -413,16 +459,16 @@ def train(
 
     all_scores_df.to_csv(results_file, sep=",", index=False)
     
-    agg_df = all_scores_df.groupby(["method", "run"]).mean().groupby("method").mean()
-    agg_df.to_csv(agg_results_file, sep=",", index=False)
-    log.info("Aggregated results:")
-    print(agg_df)
+    # agg_df = all_scores_df.groupby(["method", "run"]).mean().groupby("method").mean()
+    # agg_df.to_csv(agg_results_file, sep=",", index=False)
+    # log.info("Aggregated results:")
+    # print(agg_df)
 
     os.makedirs("models", exist_ok=True)
     with open(save_model, "wb") as f:
         pickle.dump(xgb_model, f) # rf_model
 
-    return agg_df.mean()
+    # return agg_df.mean()
     # return agg_df.to_dict(orient="records")
 
 
