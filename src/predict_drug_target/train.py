@@ -14,7 +14,7 @@ import numpy as np
 import pandas as pd
 import torch
 from sklearn import ensemble, metrics
-from sklearn.model_selection import StratifiedGroupKFold, StratifiedKFold, GridSearchCV, train_test_split, KFold
+from sklearn.model_selection import StratifiedGroupKFold, StratifiedKFold, GridSearchCV, train_test_split, KFold, LeaveOneGroupOut
 from sklearn.metrics import precision_score, recall_score, accuracy_score, roc_auc_score, f1_score, average_precision_score
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import GridSearchCV
@@ -83,6 +83,9 @@ def balance_data(pairs, classes, n_proportion):
     print(f"True negatives: {len(indices_false)}")
     pairs = np.concatenate((pairs[indices_true], pairs[indices]), axis=0)
     classes = np.concatenate((classes[indices_true], classes[indices]), axis=0)
+
+    print(f"pairs length: {len(pairs)}")
+    print(f"classes length: {len(classes)}")
 
     return pairs, classes
 
@@ -317,6 +320,21 @@ def plot_cv_indices(cv, X, y, group, ax, n_splits, lw=10):
     ax.set_title("{}".format(type(cv).__name__), fontsize=15)
     return ax
 
+import csv
+def array_to_csv(array, filename):
+    # Open the file in write mode
+    with open(filename, 'w', newline='') as csvfile:
+        # Create a CSV writer object
+        csvwriter = csv.writer(csvfile)
+        
+        # Ensure each row is a list
+        for row in array:
+            # Convert non-iterable elements to a list
+            if isinstance(row, (np.integer, int, float, str)):
+                csvwriter.writerow([row])
+            else:
+                csvwriter.writerow(row)
+
 def kfold_cv(pairs_all, classes_all, embedding_df, clfs, n_run, n_fold, n_proportion, n_seed):
     scores_df = pd.DataFrame()
     for r in range(1, n_run + 1):
@@ -328,12 +346,23 @@ def kfold_cv(pairs_all, classes_all, embedding_df, clfs, n_run, n_fold, n_propor
         pairs, classes = balance_data(pairs_all, classes_all, n_proportion)
 
         groups = get_groups_array(pairs, False)
-        
-        # skf = StratifiedGroupKFold(n_splits=n_fold, shuffle=False, random_state=n_seed)
-        skf = StratifiedGroupKFold(n_splits=n_fold, shuffle=False)
+
+        #print('pairs', pairs)
+        #print('classes', classes)
+        #print('groups', groups)
+        array_to_csv(groups, 'groups_consecutiveness_order_test.csv')
+
+        #print('groups: ', groups)
+        # TODO leave one group out
+        #skf = LeaveOneGroupOut()
+        # not sorted
+
+        skf = StratifiedGroupKFold(n_splits=n_fold, shuffle=True, random_state=n_seed)
+        #skf = StratifiedGroupKFold(n_splits=n_fold, shuffle=False)
 
         plot_cv_indices(skf, pairs, classes, groups, ax, 10)
-        filename = f'figure_{r}_no_shuffle.png'
+        
+        filename = f'figure_{r}.png'
         plt.savefig(filename)
 
         cv = skf.split(pairs, classes, groups)
