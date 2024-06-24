@@ -329,10 +329,13 @@ def kfold_cv(pairs_all, classes_all, embedding_df, clfs, n_run, n_fold, n_propor
 
         groups = get_groups_array(pairs, False)
         
-        skf = StratifiedGroupKFold(n_splits=n_fold, shuffle=True, random_state=n_seed)
+        # skf = StratifiedGroupKFold(n_splits=n_fold, shuffle=False, random_state=n_seed)
+        skf = StratifiedGroupKFold(n_splits=n_fold, shuffle=False)
 
         plot_cv_indices(skf, pairs, classes, groups, ax, 10)
-        plt.savefig('figure.png')
+        filename = f'figure_{r}_no_shuffle.png'
+        plt.savefig(filename)
+
         cv = skf.split(pairs, classes, groups)
 
         print('test_set_groups_and_counts: ', analyze_folds(groups, cv))
@@ -464,9 +467,9 @@ def train(
     # log.info("Aggregated results:")
     # print(agg_df)
 
-    os.makedirs("models", exist_ok=True)
-    with open(save_model, "wb") as f:
-        pickle.dump(xgb_model, f) # rf_model
+    # os.makedirs("models", exist_ok=True)
+    # with open(save_model, "wb") as f:
+        # pickle.dump(xgb_model, f) # rf_model
 
     # return agg_df.mean()
     # return agg_df.to_dict(orient="records")
