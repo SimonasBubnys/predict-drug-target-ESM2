@@ -84,9 +84,6 @@ def balance_data(pairs, classes, n_proportion):
     pairs = np.concatenate((pairs[indices_true], pairs[indices]), axis=0)
     classes = np.concatenate((classes[indices_true], classes[indices]), axis=0)
 
-    print(f"pairs length: {len(pairs)}")
-    print(f"classes length: {len(classes)}")
-
     return pairs, classes
 
 def get_scores(clf, X_new, y_new):
@@ -335,6 +332,10 @@ def array_to_csv(array, filename):
             else:
                 csvwriter.writerow(row)
 
+def sort_X_y_groups(X,y,groups):
+    sorted_indices = np.argsort(groups)
+    return X[sorted_indices], y[sorted_indices], groups[sorted_indices]
+
 def kfold_cv(pairs_all, classes_all, embedding_df, clfs, n_run, n_fold, n_proportion, n_seed):
     scores_df = pd.DataFrame()
     for r in range(1, n_run + 1):
@@ -347,27 +348,19 @@ def kfold_cv(pairs_all, classes_all, embedding_df, clfs, n_run, n_fold, n_propor
 
         groups = get_groups_array(pairs, False)
 
-        #print('pairs', pairs)
-        #print('classes', classes)
-        #print('groups', groups)
-        array_to_csv(groups, 'groups_consecutiveness_order_test.csv')
+        # sorting needed of LeaveOneGroupOut()
+        pairs, classes, groups = sort_X_y_groups(pairs, classes, groups)
 
-        #print('groups: ', groups)
-        # TODO leave one group out
-        #skf = LeaveOneGroupOut()
-        # not sorted
+        logo  = LeaveOneGroupOut()
+        #skf = StratifiedGroupKFold(n_splits=n_fold, shuffle=True, random_state=n_seed)
 
-        skf = StratifiedGroupKFold(n_splits=n_fold, shuffle=True, random_state=n_seed)
-        #skf = StratifiedGroupKFold(n_splits=n_fold, shuffle=False)
-
-        plot_cv_indices(skf, pairs, classes, groups, ax, 10)
-        
+        plot_cv_indices(logo , pairs, classes, groups, ax, 10)
         filename = f'figure_{r}.png'
         plt.savefig(filename)
 
-        cv = skf.split(pairs, classes, groups)
+        cv = logo.split(pairs, classes, groups)
 
-        print('test_set_groups_and_counts: ', analyze_folds(groups, cv))
+        #print('test_set_groups_and_counts: ', analyze_folds(groups, cv))
 
         pairs_classes = (pairs, classes)
         cv_list = [(train, test, k) for k, (train, test) in enumerate(cv)]
@@ -376,6 +369,37 @@ def kfold_cv(pairs_all, classes_all, embedding_df, clfs, n_run, n_fold, n_propor
         scores_df = pd.concat([scores_df, scores], ignore_index=True)
 
         #print('test_set_groups_and_counts: ', analyze_folds(groups, cv))
+    
+    return scores_df
+
+def group_cv(pairs_all, classes_all, embedding_df, clfs, n_proportion):
+    pairs, classes = balance_data(pairs_all, classes_all, n_proportion)
+
+    groups = get_groups_array(pairs, False)
+
+    # sorting needed of LeaveOneGroupOut()
+    pairs, classes, groups = sort_X_y_groups(pairs, classes, groups)
+
+    logo  = LeaveOneGroupOut()
+    
+    fig, ax = plt.subplots()
+    plot_cv_indices(logo , pairs, classes, groups, ax, np.max(groups) + 1)
+    filename = f'LOGO.png'
+    plt.savefig(filename)
+
+    cv = logo.split(pairs, classes, groups)
+    cv_list = [(train, test, k) for k, (train, test) in enumerate(cv)]
+
+    #pairs_classes = (pairs, classes)
+    #scores = cv_distribute(0, pairs_classes[0], pairs_classes[1], cv_list, embedding_df, clfs)
+
+    all_scores = pd.DataFrame()
+    for fold in cv:
+        scores = cv_run(0, pairs, classes, embedding_df, fold[0], fold[1], fold[2], clfs)
+        all_scores = pd.concat([all_scores, scores], ignore_index=True)
+
+    scores_df = pd.DataFrame()
+    scores_df = pd.concat([scores_df, all_scores], ignore_index=True)
     
     return scores_df
 
@@ -472,7 +496,7 @@ def train(
         n_jobs=-1,
         random_state=42,
         tree_method='hist', # Use GPU optimized histogram algorithm
-        # device='gpu',
+        device='gpu',
     )
 
     # clfs = [('Naive Bayes',nb_model),('Logistic Regression',lr_model),('Random Forest',rf_model)]
@@ -485,7 +509,8 @@ def train(
     sc = None
 
     # Run training
-    all_scores_df = kfold_cv(pairs, labels, embeddings, clfs, n_run, n_fold, n_proportion, n_seed)
+    # all_scores_df = kfold_cv(pairs, labels, embeddings, clfs, n_run, n_fold, n_proportion, n_seed)
+    all_scores_df = group_cv(pairs, labels, embeddings, clfs, n_proportion=1)
 
     print('all scores df columns ', all_scores_df.columns)
 
@@ -496,9 +521,9 @@ def train(
     # log.info("Aggregated results:")
     # print(agg_df)
 
-    # os.makedirs("models", exist_ok=True)
-    # with open(save_model, "wb") as f:
-        # pickle.dump(xgb_model, f) # rf_model
+    os.makedirs("models_new", exist_ok=True)
+    with open(save_model, "wb") as f:
+        pickle.dump(xgb_model, f) # rf_model
 
     # return agg_df.mean()
     # return agg_df.to_dict(orient="records")
@@ -730,19 +755,19 @@ if __name__ == "__main__":
     # Longer version:
     #subject_sim_thresholds = [1, 0.95, 0.90, 0.85, 0.80, 0.75, 0.70, 0.65, 0.60, 0.55, 0.50] # 0.45, 0.40, 0.35, 0.30, 0.25, 0.20, 0.15, 0.10
     #object_sim_thresholds = [1, 0.99, 0.98, 0.97, 0.96, 0.95, 0.94, 0.93, 0.92, 0.91, 0.90, 0.89, 0.88, 0.87] # 0.86, 0.85, 0.84, 0.82, 0.80, 0.78, 0.76, 0.74, 0.72, 0.70
-    subject_sim_thresholds = [1]
-    object_sim_thresholds = [1]
-    params = { #XGB
-        'max_depth': None,
-        'n_estimators': 200,
-        # For XGB:
-        'learning_rate': 0.1,
-        'subsample': 0.8,
-        'colsample_bytree': 0.8,
-        'gamma': 0,
-        'reg_alpha': 0.1,
-        'reg_lambda': 1,
-    }
+    # subject_sim_thresholds = [1]
+    # object_sim_thresholds = [1]
+    # params = { #XGB
+    #     'max_depth': None,
+    #     'n_estimators': 200,
+    #     # For XGB:
+    #     'learning_rate': 0.1,
+    #     'subsample': 0.8,
+    #     'colsample_bytree': 0.8,
+    #     'gamma': 0,
+    #     'reg_alpha': 0.1,
+    #     'reg_lambda': 1,
+    # }
     # params = {
     #     'n_estimators': 200,
     #     'criterion': "gini", # log_loss
@@ -753,19 +778,23 @@ if __name__ == "__main__":
     #     'n_jobs': -1,
     #     # 'class_weight': 'balanced',
     # }
-    scores_df = pd.DataFrame()
-    for subject_sim_threshold in subject_sim_thresholds:
-        for object_sim_threshold in object_sim_thresholds:
-            # Exclude similar then run training on GPU
-            df_known_dt, df_drugs_embeddings, df_targets_embeddings  = exclude_similar("data/opentargets", subject_sim_threshold, object_sim_threshold)
-            print(f"Similar excluded for {subject_sim_threshold}/{object_sim_threshold}")
 
-            #scores = train_gpu(df_known_dt, df_drugs_embeddings, df_targets_embeddings, params)
-            scores = train(df_known_dt, df_drugs_embeddings, df_targets_embeddings, params)
+    df_known_dt, df_drugs_embeddings, df_targets_embeddings = exclude_similar("data/opentargets", 1, 1)
+    train(df_known_dt, df_drugs_embeddings, df_targets_embeddings)
 
-            scores["subject_sim_threshold"] = subject_sim_threshold
-            scores["object_sim_threshold"] = object_sim_threshold
-            scores_df = pd.concat([scores_df, scores], ignore_index=True)
+    # scores_df = pd.DataFrame()
+    # for subject_sim_threshold in subject_sim_thresholds:
+    #     for object_sim_threshold in object_sim_thresholds:
+    #         # Exclude similar then run training on GPU
+    #         df_known_dt, df_drugs_embeddings, df_targets_embeddings  = exclude_similar("data/opentargets", subject_sim_threshold, object_sim_threshold)
+    #         print(f"Similar excluded for {subject_sim_threshold}/{object_sim_threshold}")
 
-    print("SCORES DF", scores_df)
-    scores_df.to_csv(f"{out_dir}/compare_scores_opentargets_xgb.csv", index=False)
+    #         #scores = train_gpu(df_known_dt, df_drugs_embeddings, df_targets_embeddings, params)
+    #         scores = train(df_known_dt, df_drugs_embeddings, df_targets_embeddings, params)
+
+    #         scores["subject_sim_threshold"] = subject_sim_threshold
+    #         scores["object_sim_threshold"] = object_sim_threshold
+    #         scores_df = pd.concat([scores_df, scores], ignore_index=True)
+
+    # print("SCORES DF", scores_df)
+    # scores_df.to_csv(f"{out_dir}/compare_scores_opentargets_xgb.csv", index=False)
