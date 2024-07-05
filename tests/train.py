@@ -99,6 +99,38 @@ def assign_groups(df, column_name):
     
     return df, group_to_atc
 
+def simplify_ec_number(ec):
+    parts = ec.split('.')
+    if ec.startswith('2.7.10'):
+        return '.'.join(parts[:5])
+    elif ec.startswith('2.7'):
+        return '.'.join(parts[:3])
+    else:
+        return '.'.join(parts[:2])
+
+def get_groups_array_targets(pairs):
+    targets_ec_numbers = pd.read_csv("target_ec_numbers.csv")
+    targets_ec_numbers['simplified_ec_number'] = targets_ec_numbers['target_ec_number'].apply(simplify_ec_number)
+
+    known_drugs_targets = pd.read_csv("../data/opentargets/known_drugs_targets.csv")
+
+    # concat target ec numbers with opentargets_drugs_targets (indexes are correct after mapping)
+    df = pd.concat([known_drugs_targets, targets_ec_numbers['simplified_ec_number']], axis=1)
+
+    # get the only the pairs we are interested in (pairs) by matching the drug and target columns of known_drugs_targets and pairs
+    df = df[df['drug'].isin(pairs[:, 0]) & df['target'].isin(pairs[:, 1])]
+
+
+
+    
+
+    #df_groups, ec_group_dict = assign_groups(targets_ec_numbers, 'simplified_ec_number')  
+
+    df_groups['group'] = df_groups['group'].astype(int)
+    groups_array = df_groups['group'].values
+
+    return groups_array, ec_group_dict
+
 def get_groups_array(pairs, print_groups=False, return_dict=False):
 
     if print_groups:
@@ -262,7 +294,7 @@ def get_scores(clf, X_new, y_new):
     scores = multimetric_score(clf, X_new, y_new, scorers)
     return scores
 
-def crossvalid_groups(train_df, test_df, clfs, fold_index, excluded_group, atc_group_dict):
+def crossvalid_groups(train_df, test_df, clfs, fold_index, excluded_group, group_dict, excluded_group_name=None):
     features_cols = train_df.columns.difference(["drug", "target", "Class"])
     print(f"Features count: {len(features_cols)}")
     X = train_df[features_cols].values
@@ -284,7 +316,8 @@ def crossvalid_groups(train_df, test_df, clfs, fold_index, excluded_group, atc_g
         row["fold"] = fold_index
         row["method"] = name
         row["excluded group"] = excluded_group
-        row["excluded group atc"] = atc_group_dict[excluded_group]
+        excluded_group_name = 'excluded group ec'
+        row[excluded_group_name] = group_dict[excluded_group]
         scores = get_scores(clf, X_new, y_new)
         row.update(scores)
 
@@ -322,7 +355,7 @@ def crossvalid(train_df, test_df, clfs, run_index, fold_index):
 
     return results  # , sclf_scores
 
-def cv_run(pairs, classes, embedding_df, train, test, fold_index, clfs, exclude_group=False, excluded_group=None, atc_group_dict=None):
+def cv_run(pairs, classes, embedding_df, train, test, fold_index, clfs, exclude_group=False, excluded_group=None, group_dict=None):
     # print( f"Run: {run_index} Fold: {fold_index} Train size: {len(train)} Test size: {len(test)}")
     train_df = pd.DataFrame(
         list(zip(pairs[train, 0], pairs[train, 1], classes[train])), columns=["drug", "target", "Class"]
@@ -338,7 +371,7 @@ def cv_run(pairs, classes, embedding_df, train, test, fold_index, clfs, exclude_
         embedding_df["target"], left_on="target", right_on="target"
     )
     if exclude_group:
-        all_scores = crossvalid_groups(train_df, test_df, clfs, fold_index, excluded_group, atc_group_dict)
+        all_scores = crossvalid_groups(train_df, test_df, clfs, fold_index, excluded_group, group_dict)
     else:
         all_scores = crossvalid(train_df, test_df, clfs, fold_index)
 
@@ -367,10 +400,10 @@ def cv_run(pairs, classes, embedding_df, train, test, fold_index, clfs, exclude_
 
     return all_scores
 
-def cv_distribute(pairs, classes, cv, embedding_df, clfs, exclude_group=False, excluded_group=None, atc_group_dict=None):
+def cv_distribute(pairs, classes, cv, embedding_df, clfs, exclude_group=False, excluded_group=None, group_dict=None):
     all_scores = pd.DataFrame()
     for fold in cv:
-        scores = cv_run(pairs, classes, embedding_df, fold[0], fold[1], fold[2], clfs, exclude_group, excluded_group, atc_group_dict)
+        scores = cv_run(pairs, classes, embedding_df, fold[0], fold[1], fold[2], clfs, exclude_group, excluded_group, group_dict)
         all_scores = pd.concat([all_scores, scores], ignore_index=True)
     return all_scores
 
@@ -417,36 +450,61 @@ def group_cv(pairs_all, classes_all, embedding_df, clfs):
     scores_df = pd.concat([scores_df, scores], ignore_index=True)
     return scores_df
 
-def excluded_group_cv(pairs_all, classes_all, embedding_df, clfs):
+def excluded_group_cv(pairs_all, classes_all, embedding_df, clfs, type):
     pairs, classes = balance_data(pairs_all, classes_all)
-
-    groups, atc_group_dict = get_groups_array(pairs, print_groups=False, return_dict=True)
+    if type == 'ec':
+        groups, group_dict = get_groups_array_targets()
+    elif type == 'atc':
+        groups, group_dict = get_groups_array(pairs, print_groups=False, return_dict=True)
+    else:
+        raise ValueError('Type should be either ec or atc')
     print("Groups count: ", count_groups(groups))
-
     scores_df = pd.DataFrame()
-    group_numbers_to_exclude = np.array([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15])
+    group_numbers_to_exclude = np.array([i for i in range(42)])
     n_splits = 5
     for i in group_numbers_to_exclude:
         classes_included, pairs_included = get_included_classes_pairs(classes, pairs, groups, i)
-
         skf = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=10)
         fig, ax = plt.subplots(figsize=(15, 5))
         plot_cv_indices(skf, pairs_included, classes_included, groups, ax, fig, n_splits, plot_groups=False)
         plt.savefig(f'skf_excluded_group_{i}.png')
-
         cv = skf.split(pairs_included, classes_included)
         cv_list = [(train, test, k) for k, (train, test) in enumerate(cv)]
-
         pairs_classes = (pairs_included, classes_included)
-        scores = cv_distribute(pairs_classes[0], pairs_classes[1], cv_list, embedding_df, clfs, exclude_group=True, excluded_group=i, atc_group_dict=atc_group_dict)
-        
+        scores = cv_distribute(pairs_classes[0], pairs_classes[1], cv_list, embedding_df, clfs, exclude_group=True, excluded_group=i, group_dict=group_dict)
         scores_df = pd.concat([scores_df, scores], ignore_index=True)
-
     return scores_df
 
-df_known_dt = pd.read_csv("./data/opentargets/known_drugs_targets.csv")
-df_drugs = pd.read_csv("./data/opentargets/drugs_embeddings.csv")
-df_targets = pd.read_csv("./data/opentargets/targets_embeddings.csv")
+# def excluded_group_cv(pairs_all, classes_all, embedding_df, clfs):
+#     pairs, classes = balance_data(pairs_all, classes_all)
+
+#     groups, atc_group_dict = get_groups_array(pairs, print_groups=False, return_dict=True)
+#     print("Groups count: ", count_groups(groups))
+
+#     scores_df = pd.DataFrame()
+#     group_numbers_to_exclude = np.array([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15])
+#     n_splits = 5
+#     for i in group_numbers_to_exclude:
+#         classes_included, pairs_included = get_included_classes_pairs(classes, pairs, groups, i)
+
+#         skf = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=10)
+#         fig, ax = plt.subplots(figsize=(15, 5))
+#         plot_cv_indices(skf, pairs_included, classes_included, groups, ax, fig, n_splits, plot_groups=False)
+#         plt.savefig(f'skf_excluded_group_{i}.png')
+
+#         cv = skf.split(pairs_included, classes_included)
+#         cv_list = [(train, test, k) for k, (train, test) in enumerate(cv)]
+
+#         pairs_classes = (pairs_included, classes_included)
+#         scores = cv_distribute(pairs_classes[0], pairs_classes[1], cv_list, embedding_df, clfs, exclude_group=True, excluded_group=i, atc_group_dict=atc_group_dict)
+        
+#         scores_df = pd.concat([scores_df, scores], ignore_index=True)
+
+#     return scores_df
+
+df_known_dt = pd.read_csv("../data/opentargets/known_drugs_targets.csv")
+df_drugs = pd.read_csv("../data/opentargets/drugs_embeddings.csv")
+df_targets = pd.read_csv("../data/opentargets/targets_embeddings.csv")
 today = date.today()
 results_file = f"openpredict_drug_targets_scores_{today}.csv"
 pairs, labels = generate_dt_pairs(df_known_dt)
@@ -478,7 +536,7 @@ embeddings = {
     "target": df_targets,
 }
 #all_scores_df = group_cv(pairs, labels, embeddings, clfs)
-all_scores_df = excluded_group_cv(pairs, labels, embeddings, clfs)
+all_scores_df = excluded_group_cv(pairs, labels, embeddings, clfs, 'ec')
 
 print('all scores df columns ', all_scores_df.columns)
 all_scores_df.to_csv(results_file, sep=",", index=False)
