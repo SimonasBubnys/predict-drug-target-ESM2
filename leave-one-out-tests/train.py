@@ -114,7 +114,7 @@ def get_groups_array_targets(pairs):
 
     known_drugs_targets = pd.read_csv("../data/opentargets/known_drugs_targets.csv")
 
-    targets_ec_numbers = pd.read_csv("target_ec_numbers_05_07_2024.csv")
+    targets_ec_numbers = pd.read_csv("target/target_ec_numbers_05_07_2024.csv")
     targets_ec_numbers['simplified_ec_number'] = targets_ec_numbers['target_ec_number'].apply(simplify_ec_number)
     targets_ec_numbers.columns = ['index', 'target_ec_number', 'simplified_ec_number']
     ec = pd.concat([targets_ec_numbers,known_drugs_targets], axis=1)
@@ -458,7 +458,7 @@ def excluded_group_cv(pairs_all, classes_all, embedding_df, clfs, type):
         raise ValueError('Type should be either ec or atc')
     print("Groups count: ", count_groups(groups))
     scores_df = pd.DataFrame()
-    group_numbers_to_exclude = np.array([i for i in range(2)])
+    group_numbers_to_exclude = np.array([i for i in range(len(group_dict))])
     n_splits = 5
     for i in group_numbers_to_exclude:
         classes_included, pairs_included = get_included_classes_pairs(classes, pairs, groups, i)
